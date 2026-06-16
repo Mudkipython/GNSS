@@ -129,6 +129,17 @@ def inject_style() -> None:
             border-radius: 8px;
             color: #17364a;
         }
+        .control-strip {
+            border: 1px solid #c9dbe5;
+            border-radius: 14px;
+            background: #ffffff;
+            padding: 0.85rem 1rem;
+            margin: 0.5rem 0 1rem 0;
+            box-shadow: 0 6px 16px rgba(31, 111, 139, 0.06);
+        }
+        section[data-testid="stSidebar"] {
+            border-right: 1px solid #bfd3df;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -350,7 +361,7 @@ def look_sector_map(site_lon: float, site_lat: float, risk: float | None = None)
             fillcolor=f"rgba(221, 132, 82, {0.18 + 0.45 * min(max(risk, 0), 1):.2f})",
             line=dict(color=ATLAS_ORANGE, width=2),
             name="approx. look sector",
-            hovertemplate="Approximate GNSS-IR look sector<br>mean suspect risk=%{customdata:.2f}<extra></extra>",
+            hovertemplate="Approximate GNSS-IR look sector<br>selected-day suspect risk=%{customdata:.2f}<extra></extra>",
             customdata=[risk] * len(sector_lons),
         )
     )
@@ -485,6 +496,29 @@ def show_file_links(paths: Iterable[Path]) -> None:
     st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
 
 
+def pipeline_predictions(preds: pd.DataFrame, pipeline: str | None) -> pd.DataFrame:
+    if preds.empty:
+        return pd.DataFrame()
+    if pipeline and "pipeline" in preds.columns:
+        df = preds[preds["pipeline"].eq(pipeline)].copy()
+    else:
+        df = preds.copy()
+    return df.sort_values("date")
+
+
+def risk_at_date(preds: pd.DataFrame, pipeline: str | None, selected_date) -> dict:
+    df = pipeline_predictions(preds, pipeline)
+    if df.empty or "date" not in df.columns:
+        return {"risk": None, "date": selected_date, "label": "n/a", "prediction": "n/a"}
+    target = pd.Timestamp(selected_date)
+    distances = (df["date"] - target).abs()
+    row = df.loc[distances.idxmin()]
+    risk = float(row.get("suspect_probability", np.nan))
+    label = LABEL_NAMES.get(int(row.get("weak_label", -1)), "n/a") if pd.notna(row.get("weak_label", np.nan)) else "n/a"
+    pred = LABEL_NAMES.get(int(row.get("prediction", -1)), "n/a") if pd.notna(row.get("prediction", np.nan)) else "n/a"
+    return {"risk": risk, "date": row["date"].date(), "label": label, "prediction": pred}
+
+
 summary = bundled_json("week7_summary", W7_DIR / "week7_geography_progress_summary.json")
 primary = bundled_csv("primary_v0v5_expanding_leaderboard", W6_DIR / "primary_v0v5_expanding_leaderboard.csv")
 signal = bundled_csv("signal_only_expanding_leaderboard", W6_DIR / "signal_only_expanding_leaderboard.csv")
@@ -504,20 +538,26 @@ else:
     min_date = pd.Timestamp("2024-08-20").date()
     max_date = pd.Timestamp("2025-10-26").date()
 
+model_options = signal["pipeline"].tolist() if not signal.empty and "pipeline" in signal.columns else []
+default_pipeline = model_options[0] if model_options else None
+start_date, end_date = min_date, max_date
+
 inject_style()
 
 with st.sidebar:
     st.title("Field atlas")
-    st.caption("PRECIPICE GNSS-IR review dashboard.")
-    explanation_level = st.segmented_control("Explanation level", ["Beginner", "Detailed"], default="Beginner")
-    date_range = st.date_input("Date range", value=(min_date, max_date), min_value=min_date, max_value=max_date)
-    if isinstance(date_range, tuple) and len(date_range) == 2:
-        start_date, end_date = date_range
-    else:
-        start_date, end_date = min_date, max_date
-    model_options = signal["pipeline"].tolist() if not signal.empty and "pipeline" in signal.columns else []
-    default_model = model_options[0] if model_options else ""
-    selected_pipeline = st.selectbox("Signal-only pipeline", model_options, index=0 if model_options else None)
+    st.caption("PRECIPICE GNSS-IR review dashboard")
+    st.markdown(
+        """
+        **Suggested path**
+
+        1. Start with **Map explorer**.
+        2. Move the date slider.
+        3. Compare **V-series** and **S-series** in Model evidence.
+        4. Use tabs only when you need details.
+        """
+    )
+    st.info("Controls are placed next to each map/chart instead of hidden here.", icon=":material/touch_app:")
     st.caption("No model is retrained in this app.")
 
 hero()
@@ -532,12 +572,12 @@ st.warning(
 
 tabs = st.tabs([
     "Atlas overview",
+    "Map explorer",
     "Water-level product",
     "Validation & tide",
     "Label logic",
     "Signal features",
     "Model evidence",
-    "Map review",
     "Glossary",
 ])
 
@@ -570,8 +610,8 @@ with tabs[0]:
     st.subheader("Site-atlas preview")
     site_lat = float(summary.get("site_lat", 76.42))
     site_lon = float(summary.get("site_lon", -82.9))
-    if not preds.empty and selected_pipeline:
-        mean_risk_preview = preds[preds["pipeline"].eq(selected_pipeline)]["suspect_probability"].mean()
+    if not preds.empty and default_pipeline:
+        mean_risk_preview = pipeline_predictions(preds, default_pipeline)["suspect_probability"].mean()
     else:
         mean_risk_preview = None
     col_a, col_b = st.columns([1.1, 0.9])
@@ -602,12 +642,53 @@ with tabs[0]:
         st.dataframe(flow, hide_index=True, width="stretch")
 
 with tabs[1]:
+    st.header("Map explorer")
+    st.write("Choose a date directly beside the map. The look-sector color updates to show the selected day's suspect risk.")
+
+    site_lat = float(summary.get("site_lat", 76.42))
+    site_lon = float(summary.get("site_lon", -82.9))
+    map_pipeline = st.selectbox("Risk model for map", model_options, index=0 if model_options else None, key="map_pipeline")
+    map_pred = pipeline_predictions(preds, map_pipeline)
+    if not map_pred.empty:
+        map_min = map_pred["date"].min().date()
+        map_max = map_pred["date"].max().date()
+        default_map_date = min(max(pd.Timestamp("2025-02-15").date(), map_min), map_max)
+        selected_map_date = st.slider("Review date", min_value=map_min, max_value=map_max, value=default_map_date, format="YYYY-MM-DD")
+        map_status = risk_at_date(preds, map_pipeline, selected_map_date)
+    else:
+        selected_map_date = min_date
+        map_status = {"risk": None, "date": selected_map_date, "label": "n/a", "prediction": "n/a"}
+
+    risk_value = map_status["risk"]
+    col_map, col_story = st.columns([0.58, 0.42])
+    with col_map:
+        st.plotly_chart(look_sector_map(site_lon, site_lat, risk_value), width="stretch", key="explorer_sector_map")
+    with col_story:
+        st.metric("Selected date", str(map_status["date"]), border=True)
+        st.metric("P(suspect)", as_percent(risk_value), border=True)
+        st.metric("Proxy label", map_status["label"], border=True)
+        st.metric("Model prediction", map_status["prediction"], border=True)
+        st.markdown(
+            """
+            <div class="map-note">
+            The sector is an approximate GNSS-IR viewing geometry. Use this as a review guide:
+            a high-risk date is a good candidate for checking Sentinel-2, SAR, ERA5 weather, or field notes.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    st.plotly_chart(risk_calendar(preds, map_pipeline), width="stretch", key="explorer_risk_calendar")
+
+with tabs[2]:
     st.header("Water-level product")
     st.write("Start with the data product before modeling. The key question is whether the water-level product and uncertainty look physically plausible.")
     display_figure(W7_DIR / "fig2_v5_product_overview.png", "Full-year V5 water level, coverage, and uncertainty context.")
 
     with st.expander("Interactive V5 zoom", expanded=True):
-        vf = date_filter(v5, "datetime_utc", start_date, end_date)
+        product_range = st.slider("Water-level date range", min_value=min_date, max_value=max_date, value=(min_date, max_date), format="YYYY-MM-DD")
+        product_start, product_end = product_range
+        vf = date_filter(v5, "datetime_utc", product_start, product_end)
         if vf.empty:
             st.warning("V5 data not available for this date range.")
         else:
@@ -619,14 +700,14 @@ with tabs[1]:
             fig.update_layout(title="Zoomable V5 water level and uncertainty", yaxis_title="water level (m)", height=480)
             st.plotly_chart(fig, width="stretch", key="v5_zoom_chart")
 
-    with st.expander("Beginner note: what is error_m?", expanded=explanation_level == "Beginner"):
+    with st.expander("What is error_m?", expanded=True):
         st.write(
             "`error_m` is an uncertainty/error estimate from the GNSS-IR spline product. "
             "It is not calculated by comparing with the pressure sensor at every time. "
             "In the benchmark-paper logic, large spline error is a direct QC warning."
         )
 
-with tabs[2]:
+with tabs[3]:
     st.header("Validation and tide context")
     col_a, col_b = st.columns(2)
     with col_a:
@@ -640,7 +721,7 @@ with tabs[2]:
         st.subheader("Expanding-window validation folds")
         st.dataframe(folds, hide_index=True, width="stretch")
 
-with tabs[3]:
+with tabs[4]:
     st.header("Proxy label logic")
     st.write("This section explains the current target. It is useful, but it is not a final physical surface-state label.")
     display_figure(W7_DIR / "fig4_daily_proxy_label_diagnostics.png", "Proxy label timeline and monthly reason composition.")
@@ -663,7 +744,7 @@ with tabs[3]:
             "It cannot prove true ice/open-water/wind classification until independent evidence is added."
         )
 
-with tabs[4]:
+with tabs[5]:
     st.header("Signal features and feature selection")
     display_figure(W7_DIR / "fig4b_representative_signal_diagnostics_timeline.png", "Representative GNSS-IR signal features shown on separate axes.")
     display_figure(W7_DIR / "fig7_signal_feature_correlation_heatmap.png", "Correlated features explain why selected-feature pipelines are easier to interpret than all-input models.")
@@ -692,21 +773,27 @@ with tabs[4]:
         )
         st.write("The full signal-only model is still useful as a stress test, but not necessarily the best interpretation model.")
 
-with tabs[5]:
+with tabs[6]:
     st.header("Model evidence")
     st.write("The primary result uses monthly expanding-window validation: earlier months train, the next unseen month validates.")
 
-    model_view = st.segmented_control("Model result group", ["V0-V5 compact features", "Signal-only optimized"], default="V0-V5 compact features")
-    if model_view == "V0-V5 compact features":
+    st.markdown('<div class="control-strip">Switch between the teacher-requested compact feature experiments and the signal-only optimized pipelines.</div>', unsafe_allow_html=True)
+    model_view = st.segmented_control(
+        "Model family",
+        ["V-series compact features", "S-series signal-only"],
+        default="V-series compact features",
+        key="model_family_control",
+    )
+    if model_view == "V-series compact features":
         active = primary.copy()
         label_col = "version"
-        title = "V0-V5 expanding-window comparison"
+        title = "V-series compact-feature expanding-window comparison"
     else:
         active = signal.copy()
         label_col = "pipeline"
-        title = "Signal-only expanding-window comparison"
+        title = "S-series signal-only expanding-window comparison"
 
-    model_key = "v0v5" if model_view == "V0-V5 compact features" else "signal_only"
+    model_key = "v_series" if model_view == "V-series compact features" else "s_series"
     st.plotly_chart(leaderboard_plot(active, label_col, title), width="stretch", key=f"{model_key}_leaderboard")
     st.plotly_chart(metrics_heatmap(active, label_col, "All key metrics"), width="stretch", key=f"{model_key}_metrics_heatmap")
     st.plotly_chart(overfit_plot(active, label_col, "Overfitting check: train vs validation"), width="stretch", key=f"{model_key}_overfit")
@@ -714,55 +801,23 @@ with tabs[5]:
     st.subheader("Sortable metrics table")
     st.dataframe(nice_metrics_table(active), hide_index=True, width="stretch")
 
-    if selected_pipeline:
+    if model_view == "S-series signal-only" and model_options:
+        selected_pipeline = st.selectbox("S-series pipeline for prediction timeline", model_options, index=0, key="model_pipeline")
+        timeline_min = preds["date"].min().date() if not preds.empty else min_date
+        timeline_max = preds["date"].max().date() if not preds.empty else max_date
+        timeline_range = st.slider("Prediction timeline range", min_value=timeline_min, max_value=timeline_max, value=(timeline_min, timeline_max), format="YYYY-MM-DD")
         st.subheader("Prediction timeline")
         safe_pipeline = selected_pipeline.replace(" ", "_").replace("/", "_")
-        st.plotly_chart(prediction_timeline(preds, selected_pipeline, start_date, end_date), width="stretch", key=f"prediction_timeline_{safe_pipeline}")
+        st.plotly_chart(prediction_timeline(preds, selected_pipeline, timeline_range[0], timeline_range[1]), width="stretch", key=f"prediction_timeline_{safe_pipeline}")
+    else:
+        st.info("Prediction timelines are shown for S-series out-of-fold probability outputs.", icon=":material/info:")
 
-    with st.expander("How to read the scores", expanded=explanation_level == "Beginner"):
+    with st.expander("How to read the scores", expanded=True):
         st.write(
             "**Balanced accuracy** averages reliable-day recall and suspect-day recall, so it is better than raw accuracy when classes are imbalanced. "
             "**Recall suspect** asks how many suspect days were caught. "
             "**Overfit gap** compares train and validation performance; a large gap means the model may not generalize."
         )
-
-with tabs[6]:
-    st.header("Map review")
-    st.write("These views make the model output geographically understandable without pretending that one station can map the whole bay.")
-    site_lat = float(summary.get("site_lat", 76.42))
-    site_lon = float(summary.get("site_lon", -82.9))
-    risk_for_map = preds[preds["pipeline"].eq(selected_pipeline)]["suspect_probability"].mean() if selected_pipeline and not preds.empty else None
-    col_a, col_b = st.columns([0.52, 0.48])
-    with col_a:
-        st.plotly_chart(look_sector_map(site_lon, site_lat, risk_for_map), width="stretch", key="map_review_sector_map")
-        st.plotly_chart(risk_calendar(preds, selected_pipeline), width="stretch", key="map_review_risk_calendar")
-    with col_b:
-        display_figure(W7_DIR / "fig1b_cartopy_site_context.png", "Arctic projection and approximate look-sector context.")
-        display_figure(W7_DIR / "fig1_site_map.png", "Basic site location.")
-        display_figure(W7_DIR / "fig8_spatiotemporal_risk_map_calendar.png", "Station/look-sector risk plus daily risk calendar.")
-
-    st.markdown(
-        """
-        <div class="map-note">
-        <b>Map-reading rule:</b> treat the sector and calendar as a review guide for where/when to inspect Sentinel-2,
-        SAR, ERA5 weather, or field notes. Do not report it as a gridded sea-ice classification map.
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    st.subheader("Saved interactive HTML dashboards")
-    show_file_links(
-        [
-            W7_DIR / "interactive_v5_observing_dashboard.html",
-            W7_DIR / "interactive_label_review_dashboard.html",
-            W7_DIR / "interactive_model_dashboard.html",
-            W7_DIR / "interactive_spatiotemporal_risk_dashboard.html",
-            W7_DIR / "interactive_prediction_sector_timeslider.html",
-            W7_DIR / "interactive_tide_context_dashboard.html",
-        ]
-    )
-    st.caption("These are saved notebook artifacts. The Streamlit app recreates the most important interactions directly where possible.")
 
 with tabs[7]:
     st.header("Glossary")
