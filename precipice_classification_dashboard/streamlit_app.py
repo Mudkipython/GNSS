@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import io
 import json
+import pickle
 from pathlib import Path
 from typing import Iterable
 
+import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -11,13 +14,30 @@ import streamlit as st
 
 
 APP_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = APP_DIR.parents[1]
+
+
+def find_project_root() -> Path:
+    for candidate in [Path.cwd(), APP_DIR, *APP_DIR.parents]:
+        if (candidate / "outputs").exists() or (candidate / "Data_Raw").exists():
+            return candidate
+    if APP_DIR.parent.name == "apps":
+        return APP_DIR.parents[1]
+    return APP_DIR.parent
+
+
+PROJECT_ROOT = find_project_root()
 W6_DIR = PROJECT_ROOT / "outputs" / "eda" / "week_6_progress"
 W7_DIR = PROJECT_ROOT / "outputs" / "eda" / "week_7_geography_visual_progress"
 V5_PATH = PROJECT_ROOT / "Data_Raw" / "PRECIPICE" / "processed" / "spline_v5" / "precipice_sealevel_v5.csv"
+BUNDLE_PATH = APP_DIR / "data" / "precipice_dashboard_bundle.pkl"
 
 LABEL_NAMES = {0: "reliable proxy", 1: "suspect proxy"}
 LABEL_COLORS = {"reliable proxy": "#4C72B0", "suspect proxy": "#DD8452"}
+ATLAS_BLUE = "#1F6F8B"
+ATLAS_ICE = "#EAF3F8"
+ATLAS_NAVY = "#12263A"
+ATLAS_ORANGE = "#DD8452"
+ATLAS_GREEN = "#2F855A"
 METRIC_LABELS = {
     "oof_accuracy": "Accuracy",
     "oof_precision_suspect": "Precision: suspect",
@@ -38,6 +58,117 @@ st.set_page_config(
 )
 
 
+def inject_style() -> None:
+    st.markdown(
+        """
+        <style>
+        .block-container {
+            padding-top: 1.4rem;
+            max-width: 1420px;
+        }
+        div[data-testid="stMetric"] {
+            background: linear-gradient(180deg, #ffffff 0%, #f3f8fb 100%);
+            border: 1px solid #c9dbe5;
+            box-shadow: 0 8px 22px rgba(31, 111, 139, 0.08);
+        }
+        .geo-hero {
+            border: 1px solid #bfd3df;
+            border-radius: 14px;
+            padding: 1.25rem 1.35rem;
+            background:
+                linear-gradient(110deg, rgba(18,38,58,0.95), rgba(31,111,139,0.84)),
+                repeating-linear-gradient(45deg, rgba(255,255,255,0.08) 0 1px, transparent 1px 18px);
+            color: white;
+            box-shadow: 0 16px 35px rgba(18, 38, 58, 0.18);
+            margin-bottom: 1rem;
+        }
+        .geo-hero h1 {
+            margin: 0;
+            font-size: 2.05rem;
+            letter-spacing: 0;
+        }
+        .geo-hero p {
+            max-width: 980px;
+            margin: 0.45rem 0 0 0;
+            color: #e7f4f8;
+            font-size: 1rem;
+        }
+        .geo-badge {
+            display: inline-block;
+            padding: 0.18rem 0.55rem;
+            border-radius: 999px;
+            background: rgba(255,255,255,0.14);
+            border: 1px solid rgba(255,255,255,0.32);
+            color: #f7fbff;
+            font-size: 0.78rem;
+            margin-right: 0.35rem;
+            margin-bottom: 0.35rem;
+        }
+        .geo-card {
+            border: 1px solid #c9dbe5;
+            border-radius: 12px;
+            padding: 1rem;
+            background: #ffffff;
+            box-shadow: 0 6px 16px rgba(31, 111, 139, 0.07);
+            min-height: 118px;
+        }
+        .geo-card h3 {
+            margin: 0 0 0.35rem 0;
+            font-size: 1rem;
+            color: #12263a;
+        }
+        .geo-card p {
+            margin: 0;
+            color: #52606d;
+            font-size: 0.92rem;
+        }
+        .map-note {
+            border-left: 4px solid #1F6F8B;
+            background: #eef7fb;
+            padding: 0.75rem 0.9rem;
+            border-radius: 8px;
+            color: #17364a;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def hero() -> None:
+    st.markdown(
+        """
+        <div class="geo-hero">
+            <span class="geo-badge">GNSS-IR coastal monitoring</span>
+            <span class="geo-badge">Grise Fjord / PRECIPICE</span>
+            <span class="geo-badge">QC-first classification review</span>
+            <h1>PRECIPICE field atlas dashboard</h1>
+            <p>
+                A geography-style review interface for water-level products, pressure/tide context,
+                proxy labels, model diagnostics, and single-station look-sector risk.
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def atlas_card(title: str, body: str) -> None:
+    st.markdown(f'<div class="geo-card"><h3>{title}</h3><p>{body}</p></div>', unsafe_allow_html=True)
+
+
+@st.cache_data(show_spinner=False)
+def load_bundle(path: str) -> dict:
+    p = Path(path)
+    if not p.exists():
+        return {"tables_csv": {}, "json": {}, "images": {}, "metadata": {}}
+    with p.open("rb") as f:
+        return pickle.load(f)
+
+
+DATA_BUNDLE = load_bundle(str(BUNDLE_PATH))
+
+
 @st.cache_data(show_spinner=False)
 def read_csv(path: str, parse_dates: tuple[str, ...] = ()) -> pd.DataFrame:
     p = Path(path)
@@ -52,6 +183,20 @@ def read_json(path: str) -> dict:
     if not p.exists():
         return {}
     return json.loads(p.read_text())
+
+
+def bundled_csv(name: str, path: Path, parse_dates: tuple[str, ...] = ()) -> pd.DataFrame:
+    tables = DATA_BUNDLE.get("tables_csv", {})
+    if name in tables:
+        return pd.read_csv(io.StringIO(tables[name]), parse_dates=list(parse_dates))
+    return read_csv(str(path), parse_dates=parse_dates)
+
+
+def bundled_json(name: str, path: Path) -> dict:
+    values = DATA_BUNDLE.get("json", {})
+    if name in values:
+        return values[name]
+    return read_json(str(path))
 
 
 @st.cache_data(show_spinner=False)
@@ -84,7 +229,11 @@ def date_filter(df: pd.DataFrame, date_col: str, start, end) -> pd.DataFrame:
 
 def display_figure(path: Path, caption: str = "") -> None:
     if path.exists():
-        st.image(str(path), use_container_width=True)
+        st.image(str(path), width="stretch")
+        if caption:
+            st.caption(caption)
+    elif path.name in DATA_BUNDLE.get("images", {}):
+        st.image(DATA_BUNDLE["images"][path.name], width="stretch")
         if caption:
             st.caption(caption)
     else:
@@ -166,6 +315,124 @@ def overfit_plot(df: pd.DataFrame, label_col: str, title: str) -> go.Figure:
     return fig
 
 
+def destination_point(lon: float, lat: float, bearing_deg: float, distance_km: float) -> tuple[float, float]:
+    radius_km = 6371.0
+    bearing = np.deg2rad(bearing_deg)
+    lat1 = np.deg2rad(lat)
+    lon1 = np.deg2rad(lon)
+    angular = distance_km / radius_km
+    lat2 = np.arcsin(np.sin(lat1) * np.cos(angular) + np.cos(lat1) * np.sin(angular) * np.cos(bearing))
+    lon2 = lon1 + np.arctan2(
+        np.sin(bearing) * np.sin(angular) * np.cos(lat1),
+        np.cos(angular) - np.sin(lat1) * np.sin(lat2),
+    )
+    return float(np.rad2deg(lon2)), float(np.rad2deg(lat2))
+
+
+def look_sector_map(site_lon: float, site_lat: float, risk: float | None = None) -> go.Figure:
+    risk = 0.0 if risk is None or pd.isna(risk) else float(risk)
+    sector_lons = [site_lon]
+    sector_lats = [site_lat]
+    for az in range(180, 251, 5):
+        lon, lat = destination_point(site_lon, site_lat, az, 12)
+        sector_lons.append(lon)
+        sector_lats.append(lat)
+    sector_lons.append(site_lon)
+    sector_lats.append(site_lat)
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scattergeo(
+            lon=sector_lons,
+            lat=sector_lats,
+            mode="lines",
+            fill="toself",
+            fillcolor=f"rgba(221, 132, 82, {0.18 + 0.45 * min(max(risk, 0), 1):.2f})",
+            line=dict(color=ATLAS_ORANGE, width=2),
+            name="approx. look sector",
+            hovertemplate="Approximate GNSS-IR look sector<br>mean suspect risk=%{customdata:.2f}<extra></extra>",
+            customdata=[risk] * len(sector_lons),
+        )
+    )
+    for az in [180, 215, 250]:
+        lon, lat = destination_point(site_lon, site_lat, az, 12)
+        fig.add_trace(
+            go.Scattergeo(
+                lon=[site_lon, lon],
+                lat=[site_lat, lat],
+                mode="lines+text",
+                text=["", f"{az}°"],
+                textposition="top center",
+                line=dict(color=ATLAS_BLUE, width=2),
+                showlegend=False,
+                hovertemplate=f"Representative azimuth {az}°<extra></extra>",
+            )
+        )
+    fig.add_trace(
+        go.Scattergeo(
+            lon=[site_lon],
+            lat=[site_lat],
+            mode="markers+text",
+            marker=dict(size=15, color="#B8322A", line=dict(color="white", width=2)),
+            text=["PRECIPICE"],
+            textposition="top right",
+            name="station",
+            hovertemplate="PRECIPICE GNSS-IR<br>lat=%{lat:.3f}<br>lon=%{lon:.3f}<extra></extra>",
+        )
+    )
+    fig.update_geos(
+        projection_type="azimuthal equal area",
+        center=dict(lat=site_lat, lon=site_lon),
+        lataxis_range=[site_lat - 0.48, site_lat + 0.48],
+        lonaxis_range=[site_lon - 1.25, site_lon + 1.25],
+        showland=True,
+        landcolor="#E8ECEF",
+        showocean=True,
+        oceancolor="#DDEDF5",
+        coastlinecolor="#52606D",
+        showlakes=False,
+        resolution=50,
+    )
+    fig.update_layout(
+        title="Station-centered look-sector map",
+        height=520,
+        margin=dict(l=0, r=0, t=50, b=0),
+        legend=dict(orientation="h", yanchor="bottom", y=0.02, xanchor="left", x=0.02),
+    )
+    return fig
+
+
+def risk_calendar(preds: pd.DataFrame, pipeline: str) -> go.Figure:
+    if preds.empty or "date" not in preds.columns:
+        return go.Figure()
+    df = preds[preds["pipeline"].eq(pipeline)].copy() if "pipeline" in preds.columns and pipeline else preds.copy()
+    if df.empty:
+        return go.Figure()
+    df["month"] = df["date"].dt.to_period("M").astype(str)
+    df["day"] = df["date"].dt.day
+    cal = df.pivot_table(index="month", columns="day", values="suspect_probability", aggfunc="mean")
+    fig = go.Figure(
+        go.Heatmap(
+            z=cal.values,
+            x=cal.columns,
+            y=cal.index,
+            colorscale=[[0, "#F7FBFF"], [0.35, "#F8DDAA"], [0.7, "#F06B3D"], [1, "#8B1E2D"]],
+            zmin=0,
+            zmax=1,
+            colorbar=dict(title="P(suspect)"),
+            hovertemplate="month=%{y}<br>day=%{x}<br>P(suspect)=%{z:.2f}<extra></extra>",
+        )
+    )
+    fig.update_layout(
+        title="Daily suspect-risk calendar",
+        height=470,
+        margin=dict(l=10, r=10, t=50, b=30),
+        xaxis_title="day of month",
+        yaxis_title="month",
+    )
+    return fig
+
+
 def prediction_timeline(preds: pd.DataFrame, pipeline: str, start, end) -> go.Figure:
     if preds.empty:
         return go.Figure()
@@ -213,19 +480,22 @@ def prediction_timeline(preds: pd.DataFrame, pipeline: str, start, end) -> go.Fi
 def show_file_links(paths: Iterable[Path]) -> None:
     rows = []
     for p in paths:
-        rows.append({"artifact": p.name, "exists": p.exists(), "path": str(p)})
-    st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+        bundled = p.name in DATA_BUNDLE.get("images", {}) or p.name in DATA_BUNDLE.get("metadata", {}).get("bundled_artifacts", [])
+        rows.append({"artifact": p.name, "exists locally": p.exists(), "bundled": bundled, "path": str(p)})
+    st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
 
 
-summary = read_json(str(W7_DIR / "week7_geography_progress_summary.json"))
-primary = read_csv(str(W6_DIR / "primary_v0v5_expanding_leaderboard.csv"))
-signal = read_csv(str(W6_DIR / "signal_only_expanding_leaderboard.csv"))
-folds = read_csv(str(W6_DIR / "expanding_window_fold_summary.csv"), parse_dates=("train_start", "train_end", "validation_start", "validation_end"))
-preds = read_csv(str(W6_DIR / "signal_only_expanding_oof_predictions.csv"), parse_dates=("date",))
-feature_counts = read_csv(str(W6_DIR / "signal_only_feature_selection_counts.csv"))
-target_definition = read_csv(str(W6_DIR / "classification_target_definition.csv"))
-teacher_sets = read_csv(str(W6_DIR / "teacher_requested_feature_sets.csv"))
+summary = bundled_json("week7_summary", W7_DIR / "week7_geography_progress_summary.json")
+primary = bundled_csv("primary_v0v5_expanding_leaderboard", W6_DIR / "primary_v0v5_expanding_leaderboard.csv")
+signal = bundled_csv("signal_only_expanding_leaderboard", W6_DIR / "signal_only_expanding_leaderboard.csv")
+folds = bundled_csv("expanding_window_fold_summary", W6_DIR / "expanding_window_fold_summary.csv", parse_dates=("train_start", "train_end", "validation_start", "validation_end"))
+preds = bundled_csv("signal_only_expanding_oof_predictions", W6_DIR / "signal_only_expanding_oof_predictions.csv", parse_dates=("date",))
+feature_counts = bundled_csv("signal_only_feature_selection_counts", W6_DIR / "signal_only_feature_selection_counts.csv")
+target_definition = bundled_csv("classification_target_definition", W6_DIR / "classification_target_definition.csv")
+teacher_sets = bundled_csv("teacher_requested_feature_sets", W6_DIR / "teacher_requested_feature_sets.csv")
 v5 = load_v5(str(V5_PATH))
+if v5.empty:
+    v5 = bundled_csv("v5_spline_light", V5_PATH, parse_dates=("datetime_utc",))
 
 if not v5.empty:
     min_date = v5["datetime_utc"].min().date()
@@ -234,9 +504,11 @@ else:
     min_date = pd.Timestamp("2024-08-20").date()
     max_date = pd.Timestamp("2025-10-26").date()
 
+inject_style()
+
 with st.sidebar:
-    st.title("PRECIPICE review")
-    st.caption("Local Streamlit layer for Week 5-7 outputs.")
+    st.title("Field atlas")
+    st.caption("PRECIPICE GNSS-IR review dashboard.")
     explanation_level = st.segmented_control("Explanation level", ["Beginner", "Detailed"], default="Beginner")
     date_range = st.date_input("Date range", value=(min_date, max_date), min_value=min_date, max_value=max_date)
     if isinstance(date_range, tuple) and len(date_range) == 2:
@@ -248,8 +520,10 @@ with st.sidebar:
     selected_pipeline = st.selectbox("Signal-only pipeline", model_options, index=0 if model_options else None)
     st.caption("No model is retrained in this app.")
 
-st.title("PRECIPICE GNSS-IR classification review")
-st.caption("A teaching dashboard for QC-first coastal monitoring, proxy labels, and Week 6 model results.")
+hero()
+
+if DATA_BUNDLE.get("metadata"):
+    st.caption(f"Dashboard bundle loaded: {DATA_BUNDLE['metadata'].get('created_from', 'local artifact bundle')}")
 
 st.warning(
     "Current labels are QC-derived proxy labels. They support review and discussion, but they are not independent physical truth for ice/open water/wind.",
@@ -257,18 +531,18 @@ st.warning(
 )
 
 tabs = st.tabs([
-    "Overview",
-    "Data product",
+    "Atlas overview",
+    "Water-level product",
     "Validation & tide",
-    "Labels",
-    "Features",
-    "Models",
-    "Geography review",
+    "Label logic",
+    "Signal features",
+    "Model evidence",
+    "Map review",
     "Glossary",
 ])
 
 with tabs[0]:
-    st.header("Project overview")
+    st.header("Atlas overview")
     st.write(
         "GNSS-IR uses reflected GNSS signals to estimate water level and diagnose surface/sensor conditions. "
         "The current classification task is framed as **reliable vs suspect review support**, not confirmed physical surface-state classification."
@@ -282,8 +556,37 @@ with tabs[0]:
     c3.metric("Best V0-V5 BA", as_percent(best_primary.get("oof_balanced_accuracy") if hasattr(best_primary, "get") else None), border=True)
     c4.metric("Best signal-only BA", as_percent(best_signal.get("oof_balanced_accuracy") if hasattr(best_signal, "get") else None), border=True)
 
-    col_a, col_b = st.columns([1.15, 0.85])
+    st.subheader("Field interpretation guide")
+    guide_cols = st.columns(4)
+    with guide_cols[0]:
+        atlas_card("1. Observe", "Start from the V5 water-level product and spline uncertainty before discussing models.")
+    with guide_cols[1]:
+        atlas_card("2. Validate", "Use pressure data only in the two overlap windows; do not treat it as full-year truth.")
+    with guide_cols[2]:
+        atlas_card("3. Diagnose", "Inspect arc availability and signal features to understand why a day is marked suspect.")
+    with guide_cols[3]:
+        atlas_card("4. Review spatially", "Map the station and look sector, not a continuous sea-ice surface.")
+
+    st.subheader("Site-atlas preview")
+    site_lat = float(summary.get("site_lat", 76.42))
+    site_lon = float(summary.get("site_lon", -82.9))
+    if not preds.empty and selected_pipeline:
+        mean_risk_preview = preds[preds["pipeline"].eq(selected_pipeline)]["suspect_probability"].mean()
+    else:
+        mean_risk_preview = None
+    col_a, col_b = st.columns([1.1, 0.9])
     with col_a:
+        st.plotly_chart(look_sector_map(site_lon, site_lat, mean_risk_preview), width="stretch", key="overview_sector_map")
+    with col_b:
+        st.markdown(
+            """
+            <div class="map-note">
+            <b>Cartographic interpretation:</b> the colored sector is a review footprint for the GNSS-IR reflection geometry.
+            It is not a mapped sea-ice polygon, and it should not be interpreted as a continuous spatial prediction.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
         st.subheader("Workflow")
         flow = pd.DataFrame(
             [
@@ -296,15 +599,10 @@ with tabs[0]:
             ],
             columns=["step", "stage", "plain-language meaning"],
         )
-        st.dataframe(flow, hide_index=True, use_container_width=True)
-    with col_b:
-        st.subheader("What to remember")
-        st.info("Pressure sensor data do not cover the whole GNSS-IR year.", icon=":material/info:")
-        st.info("Tide prediction is context, not a training label.", icon=":material/timeline:")
-        st.info("One station means map output is a look-sector review, not a sea-ice map.", icon=":material/map:")
+        st.dataframe(flow, hide_index=True, width="stretch")
 
 with tabs[1]:
-    st.header("GNSS-IR V5 observing product")
+    st.header("Water-level product")
     st.write("Start with the data product before modeling. The key question is whether the water-level product and uncertainty look physically plausible.")
     display_figure(W7_DIR / "fig2_v5_product_overview.png", "Full-year V5 water level, coverage, and uncertainty context.")
 
@@ -319,7 +617,7 @@ with tabs[1]:
                 fig.add_trace(go.Scatter(x=vf["datetime_utc"], y=vf["error_m"], mode="lines", name="error_m", yaxis="y2", line=dict(color="#C44E52", width=1)))
                 fig.update_layout(yaxis2=dict(title="error_m", overlaying="y", side="right"))
             fig.update_layout(title="Zoomable V5 water level and uncertainty", yaxis_title="water level (m)", height=480)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch", key="v5_zoom_chart")
 
     with st.expander("Beginner note: what is error_m?", expanded=explanation_level == "Beginner"):
         st.write(
@@ -340,10 +638,10 @@ with tabs[2]:
 
     if not folds.empty:
         st.subheader("Expanding-window validation folds")
-        st.dataframe(folds, hide_index=True, use_container_width=True)
+        st.dataframe(folds, hide_index=True, width="stretch")
 
 with tabs[3]:
-    st.header("Proxy labels")
+    st.header("Proxy label logic")
     st.write("This section explains the current target. It is useful, but it is not a final physical surface-state label.")
     display_figure(W7_DIR / "fig4_daily_proxy_label_diagnostics.png", "Proxy label timeline and monthly reason composition.")
 
@@ -351,13 +649,13 @@ with tabs[3]:
     with col_a:
         st.subheader("How labels were made")
         if not target_definition.empty:
-            st.dataframe(target_definition, hide_index=True, use_container_width=True)
+            st.dataframe(target_definition, hide_index=True, width="stretch")
         else:
             st.write("Target-definition table is missing.")
     with col_b:
         st.subheader("Teacher-requested feature versions")
         if not teacher_sets.empty:
-            st.dataframe(teacher_sets, hide_index=True, use_container_width=True)
+            st.dataframe(teacher_sets, hide_index=True, width="stretch")
 
     with st.expander("Important caveat", expanded=True):
         st.write(
@@ -383,7 +681,7 @@ with tabs[4]:
                 labels={"selected_fold_count": "selected fold count", "feature": ""},
             )
             fig.update_layout(height=max(360, 24 * len(feature_counts)))
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch", key="feature_selection_counts_chart")
         else:
             st.info("Feature selection count output not found.")
     with col_b:
@@ -395,7 +693,7 @@ with tabs[4]:
         st.write("The full signal-only model is still useful as a stress test, but not necessarily the best interpretation model.")
 
 with tabs[5]:
-    st.header("Model comparison")
+    st.header("Model evidence")
     st.write("The primary result uses monthly expanding-window validation: earlier months train, the next unseen month validates.")
 
     model_view = st.segmented_control("Model result group", ["V0-V5 compact features", "Signal-only optimized"], default="V0-V5 compact features")
@@ -408,16 +706,18 @@ with tabs[5]:
         label_col = "pipeline"
         title = "Signal-only expanding-window comparison"
 
-    st.plotly_chart(leaderboard_plot(active, label_col, title), use_container_width=True)
-    st.plotly_chart(metrics_heatmap(active, label_col, "All key metrics"), use_container_width=True)
-    st.plotly_chart(overfit_plot(active, label_col, "Overfitting check: train vs validation"), use_container_width=True)
+    model_key = "v0v5" if model_view == "V0-V5 compact features" else "signal_only"
+    st.plotly_chart(leaderboard_plot(active, label_col, title), width="stretch", key=f"{model_key}_leaderboard")
+    st.plotly_chart(metrics_heatmap(active, label_col, "All key metrics"), width="stretch", key=f"{model_key}_metrics_heatmap")
+    st.plotly_chart(overfit_plot(active, label_col, "Overfitting check: train vs validation"), width="stretch", key=f"{model_key}_overfit")
 
     st.subheader("Sortable metrics table")
-    st.dataframe(nice_metrics_table(active), hide_index=True, use_container_width=True)
+    st.dataframe(nice_metrics_table(active), hide_index=True, width="stretch")
 
     if selected_pipeline:
         st.subheader("Prediction timeline")
-        st.plotly_chart(prediction_timeline(preds, selected_pipeline, start_date, end_date), use_container_width=True)
+        safe_pipeline = selected_pipeline.replace(" ", "_").replace("/", "_")
+        st.plotly_chart(prediction_timeline(preds, selected_pipeline, start_date, end_date), width="stretch", key=f"prediction_timeline_{safe_pipeline}")
 
     with st.expander("How to read the scores", expanded=explanation_level == "Beginner"):
         st.write(
@@ -427,14 +727,29 @@ with tabs[5]:
         )
 
 with tabs[6]:
-    st.header("Geography review")
-    st.write("These figures make the model output geographically understandable without pretending that one station can map the whole bay.")
-    col_a, col_b = st.columns(2)
+    st.header("Map review")
+    st.write("These views make the model output geographically understandable without pretending that one station can map the whole bay.")
+    site_lat = float(summary.get("site_lat", 76.42))
+    site_lon = float(summary.get("site_lon", -82.9))
+    risk_for_map = preds[preds["pipeline"].eq(selected_pipeline)]["suspect_probability"].mean() if selected_pipeline and not preds.empty else None
+    col_a, col_b = st.columns([0.52, 0.48])
     with col_a:
-        display_figure(W7_DIR / "fig1_site_map.png", "Basic site location.")
-        display_figure(W7_DIR / "fig1b_cartopy_site_context.png", "Arctic projection and approximate look-sector context.")
+        st.plotly_chart(look_sector_map(site_lon, site_lat, risk_for_map), width="stretch", key="map_review_sector_map")
+        st.plotly_chart(risk_calendar(preds, selected_pipeline), width="stretch", key="map_review_risk_calendar")
     with col_b:
+        display_figure(W7_DIR / "fig1b_cartopy_site_context.png", "Arctic projection and approximate look-sector context.")
+        display_figure(W7_DIR / "fig1_site_map.png", "Basic site location.")
         display_figure(W7_DIR / "fig8_spatiotemporal_risk_map_calendar.png", "Station/look-sector risk plus daily risk calendar.")
+
+    st.markdown(
+        """
+        <div class="map-note">
+        <b>Map-reading rule:</b> treat the sector and calendar as a review guide for where/when to inspect Sentinel-2,
+        SAR, ERA5 weather, or field notes. Do not report it as a gridded sea-ice classification map.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     st.subheader("Saved interactive HTML dashboards")
     show_file_links(
@@ -469,7 +784,7 @@ with tabs[7]:
         ],
         columns=["term", "plain-language meaning", "why it matters"],
     )
-    st.dataframe(glossary, hide_index=True, use_container_width=True)
+    st.dataframe(glossary, hide_index=True, width="stretch")
 
     st.subheader("Source artifacts")
     show_file_links(
