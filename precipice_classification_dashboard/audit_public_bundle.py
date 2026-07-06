@@ -8,8 +8,16 @@ from pathlib import Path
 
 APP_DIR = Path(__file__).resolve().parent
 BUNDLE_PATH = APP_DIR / "data" / "precipice_dashboard_public_bundle.pkl"
+PUBLIC_APP_PATH = APP_DIR / "streamlit_app.py"
 
-FORBIDDEN_TEXT = ("Data_Raw", "/Users/", "\\Users\\", "precipice_dashboard_bundle.pkl")
+FORBIDDEN_TEXT = (
+    "Data_Raw",
+    "outputs/",
+    "/Users/",
+    "\\Users\\",
+    ".mat",
+    "precipice_dashboard_bundle.pkl",
+)
 FORBIDDEN_TABLE_KEYS = ("arc", "pressure_raw", "snr_raw")
 RAW_ARC_COLUMNS = {"rh", "sp", "ptn", "clr", "pr", "ms", "vs", "af", "df"}
 PUBLIC_OOF_COLUMNS = {"date", "pipeline", "model", "weak_label", "prediction", "suspect_probability"}
@@ -47,6 +55,8 @@ def main() -> None:
         fail(f"missing {BUNDLE_PATH}")
     if BUNDLE_PATH.stat().st_size > 10 * 1024 * 1024:
         fail("bundle is larger than 10 MB")
+    if "PRECIPICE_DASHBOARD_BUNDLE" in PUBLIC_APP_PATH.read_text():
+        fail("public app permits a runtime bundle-path override")
 
     with BUNDLE_PATH.open("rb") as f:
         bundle = pickle.load(f)
@@ -67,9 +77,12 @@ def main() -> None:
         fail("public bundle must not embed static research figures")
 
     tables = bundle.get("tables_csv", {})
-    for key in tables:
+    for key, text in tables.items():
         if any(token in key.lower() for token in FORBIDDEN_TABLE_KEYS):
             fail(f"forbidden raw-style table key: {key}")
+        for token in FORBIDDEN_TEXT:
+            if token in text:
+                fail(f"table {key} contains forbidden path/token: {token}")
 
     v5_rows, v5_columns = rows_and_columns(tables.get("v5_spline_light", ""))
     if v5_columns != PUBLIC_V5_COLUMNS:

@@ -1,9 +1,29 @@
 # PRECIPICE GNSS-IR review studio
 
 This Streamlit app is an interactive presentation and exploration layer for the
-Week 5 and Week 7 PRECIPICE GNSS-IR classification work. Four task-oriented
-views cover station context, the observing product, QC/proxy-label diagnostics,
-and model evidence.
+Week 5 and Week 7 PRECIPICE GNSS-IR classification work. Five task-oriented
+views cover station context, an animated learning gallery, the observing
+product, QC/proxy-label diagnostics, and model evidence.
+
+The Overview is designed as a guided science exhibit rather than a conventional
+dashboard: an Arctic-to-local map sequence introduces the field setting, three
+short story panels explain GNSS-IR reflection, and a session-local "Signal
+detective" challenge lets visitors compare their visual judgment with an OOF
+review decision. The challenge is educational only and is explicitly not an
+independent environmental validation.
+
+The Observe → Tide view also includes a date-controlled, 24-frame teaching
+animation. A vertically exaggerated water surface and reflected signal path
+move with the predicted tide anomaly while a synchronized curve compares tide
+and GNSS-IR anomalies. The animation is interpolated from the audited six-hour
+public table; it is a conceptual exhibit, not electromagnetic ray tracing.
+
+The Learn view contains three short, child-friendly animated exhibits. The ice
+damping and QC sorting animations use clearly labelled teaching tokens and
+synthetic curves; they are not new measurements. The time-aware validation
+animation uses the public expanding-window fold dates and sample counts. This
+separation keeps analogies in the learning layer and the research plots in the
+evidence-oriented views.
 
 The deployed app does not retrain models, regenerate notebooks, scan project
 folders, or read laboratory source files. It reads one audited bundle only.
@@ -44,8 +64,11 @@ To build an internal full-resolution bundle deliberately:
 ```bash
 uv run python build_data_bundle.py --profile private
 PRECIPICE_DASHBOARD_BUNDLE=data/precipice_dashboard_bundle.pkl \
-  uv run streamlit run streamlit_app.py
+  uv run streamlit run streamlit_app_legacy.py
 ```
+
+The public `streamlit_app.py` does not accept a runtime bundle-path override.
+The ignored legacy entry point is reserved for authorized local review only.
 
 `.gitignore` is not retroactive. If a private bundle or raw file was already
 committed, remove it from Git's index and audit repository history before
