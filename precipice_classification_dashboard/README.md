@@ -5,9 +5,18 @@ Teacher-facing Streamlit companion to Part I of the PRECIPICE GNSS-IR project
 product, QC-derived proxy labels, and time-aware classification evidence in an
 interactive format.
 
-> **Project demo:** [Open the hosted Streamlit application](https://gnss-class.streamlit.app/)  
-> The current deployment may require Streamlit sign-in, depending on its access
-> settings.
+[![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://gnss-class.streamlit.app/)
+
+**Live demo:** <https://gnss-class.streamlit.app/>  
+The current deployment may require Streamlit sign-in, depending on its access
+settings.
+
+## Authors and project team
+
+- Ruihe (Louis) Zhang
+- Elena Savidge
+
+Project supervision: Prof. Natalya Gomez.
 
 ## Purpose and research boundary
 
@@ -40,11 +49,17 @@ runtime bundle-path override, retrain a model, or regenerate notebooks. Private
 source data are needed only when an authorized researcher builds the public
 artifact locally; they are not needed by the deployed application.
 
+> **A pickle file is not a privacy or security control.** Pickle provides
+> serialization only: anyone who obtains the file can normally recover its
+> contents. Renaming or converting a raw CSV to `.pkl` would still disclose the
+> raw data. The bundle below is eligible for deployment only because its
+> contents are reduced before serialization and checked by an automated audit.
+
 ```mermaid
 flowchart LR
     A["Authorized local research inputs"] --> B["Public-profile bundle builder"]
     B --> C["Automated disclosure audit"]
-    C -->|pass| D["Sanitized public bundle"]
+    C -->|pass| D["Content-audited public bundle"]
     D --> E["Read-only Streamlit presentation"]
     C -->|fail| F["Deployment blocked"]
 ```
@@ -62,14 +77,15 @@ flowchart LR
 
 The repository uses two additional safeguards:
 
-1. `.gitignore` blocks all dashboard pickle files by default and allowlists only
+1. `.gitignore` explicitly blocks the source-resolution sea-level CSV and all
+   dashboard pickle files by default. It allowlists only the content-audited
    `data/precipice_dashboard_public_bundle.pkl`.
 2. `audit_public_bundle.py` fails if the public artifact exceeds its size limit,
    has an unexpected disclosure profile or schema, contains forbidden source
-   paths, exposes raw-style tables, includes over-precise OOF probabilities, or
-   embeds static research images.
+   paths or raw-source filenames, exposes raw-style tables, includes
+   over-precise OOF probabilities, or embeds static research images.
 
-The current local public artifact passed this audit on **2026-08-10**. Its
+The current local public artifact passed this audit on **2026-08-11**. Its
 audited profile is:
 
 - 0.28 MB;
@@ -78,10 +94,13 @@ audited profile is:
 - 2,880 reduced OOF rows; and
 - 0 embedded images.
 
-These controls prevent accidental publication of source-resolution laboratory
-tables. They do not make information displayed by the app confidential: any
-chart, aggregate result, coordinate, or time series visible in a hosted app is
-public to everyone who has access to that deployment.
+These controls prevent accidental publication of the source-resolution
+laboratory tables. They do not make the approved reduced content confidential:
+any chart, aggregate result, coordinate, time series, or downloadable bundle in
+a hosted app or repository is visible to everyone who has access to that
+deployment or repository. If even reduced values are not approved for that
+audience, the public bundle must not be committed; use restricted storage and a
+private deployment instead.
 
 ## Machine-learning leakage controls
 
@@ -122,13 +141,9 @@ uv run python build_data_bundle.py --profile public
 uv run python audit_public_bundle.py
 ```
 
-The public-profile builder reads approved inputs from:
-
-- `outputs/eda/week_5_classification_progress/`;
-- `outputs/eda/week_6_progress/`;
-- `outputs/eda/week_7_geography_visual_progress/`; and
-- `Data_Raw/PRECIPICE/processed/spline_v5/precipice_sealevel_v5.csv`.
-
+The public-profile builder reads approved research inputs from local-only,
+Git-ignored project directories. This includes the private source-resolution
+sea-level table, but that file is never copied into the application repository.
 The builder aggregates, reduces, rounds, drops, or coarsens fields before
 writing the deployable artifact. A build must not be released unless the audit
 passes.
@@ -155,7 +170,8 @@ Before publishing a new application version:
 
 1. Build with `--profile public`.
 2. Run `audit_public_bundle.py` and require a passing result.
-3. Confirm that no private bundle, raw file, secret, or local path is staged.
+3. Inspect the exact staged-file list and confirm that no private bundle, raw
+   CSV, secret, source-resolution table, or local path is present.
 4. Review the public app as an unauthenticated or least-privileged viewer.
 5. Reconfirm that every displayed result is approved for the deployment's
    audience.

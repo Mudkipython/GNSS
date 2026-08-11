@@ -16,6 +16,7 @@ FORBIDDEN_TEXT = (
     "/Users/",
     "\\Users\\",
     ".mat",
+    "precipice_sealevel_v5.csv",
     "precipice_dashboard_bundle.pkl",
 )
 FORBIDDEN_TABLE_KEYS = ("arc", "pressure_raw", "snr_raw")
