@@ -1,125 +1,100 @@
-# PRECIPICE GNSS-IR Classification Review Studio
+# Stage 1: PRECIPICE GNSS-IR Reliability Classification
 
-Teacher-facing Streamlit companion to Part I of the PRECIPICE GNSS-IR project
-(Weeks 5–7). The application presents station context, the GNSS-IR observing
-product, QC-derived proxy labels, and time-aware classification evidence in an
-interactive format.
+This repository contains the Streamlit review app for Stage 1 of the
+PRECIPICE GNSS-IR project at Ausuittuq (Grise Fiord), Nunavut. The shore-mounted
+receiver looks across Jones Sound and records reflected satellite signals that
+can be processed into a water-level time series. Sea ice, incomplete
+observations, and weak reflection geometry can change the signal, so Stage 1
+identifies days that need closer quality-control review.
 
 [![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://gnss-class.streamlit.app/)
 
 **Live demo:** <https://gnss-class.streamlit.app/>  
-The current deployment may require Streamlit sign-in, depending on its access
-settings.
+The deployment may require Streamlit sign-in.
 
-## Authors and project team
+## What Stage 1 does
 
-- Ruihe (Louis) Zhang
-- Elena Savidge
-
-Project supervision: Prof. Natalya Gomez.
-
-## Purpose and research boundary
-
-This application is a review and communication layer, not a production
-monitoring system. It helps a reviewer examine:
-
-- the field setting and GNSS-IR reflection geometry;
-- daily observing-product and QC context;
-- tide predictions as geographic and physical context;
-- QC-derived proxy-label diagnostics; and
-- model evidence from blocked and expanding-window validation.
-
-The classification target is a **QC-derived proxy label**, not an independent
-measurement of environmental truth. Pressure observations are available only
-for two overlap windows, and tide predictions are contextual covariates rather
-than pressure truth. The educational animations use either synthetic teaching
-elements or explicitly identified, aggregated public tables.
-
-## Data protection and disclosure controls
-
-The deployed application is intentionally isolated from the laboratory data
-tree. It reads one fixed, sanitized artifact:
-
-```text
-data/precipice_dashboard_public_bundle.pkl
-```
-
-It does **not** scan project folders, read `Data_Raw/` or `outputs/`, accept a
-runtime bundle-path override, retrain a model, or regenerate notebooks. Private
-source data are needed only when an authorized researcher builds the public
-artifact locally; they are not needed by the deployed application.
-
-> **A pickle file is not a privacy or security control.** Pickle provides
-> serialization only: anyone who obtains the file can normally recover its
-> contents. Renaming or converting a raw CSV to `.pkl` would still disclose the
-> raw data. The bundle below is eligible for deployment only because its
-> contents are reduced before serialization and checked by an automated audit.
-
-```mermaid
-flowchart LR
-    A["Authorized local research inputs"] --> B["Public-profile bundle builder"]
-    B --> C["Automated disclosure audit"]
-    C -->|pass| D["Content-audited public bundle"]
-    D --> E["Read-only Streamlit presentation"]
-    C -->|fail| F["Deployment blocked"]
-```
-
-### Public artifact contents
-
-| Included in the public bundle | Explicitly excluded |
+| Item | Definition |
 |---|---|
-| Daily aggregated V5/QC values | Five-minute V5 source table |
-| Six-hour tide and GNSS anomaly series | Level-1 arc rows and raw arc-feature schema |
-| Reduced OOF prediction fields with probabilities rounded to three decimals | Raw pressure measurements |
-| Aggregate model, fold, and feature-selection summaries | Static research figures and notebook outputs |
-| Pressure **coverage intervals** without measurements | Absolute local paths and source-directory references |
-| Coarsened display coordinates | Private bundle and runtime path overrides |
+| Task | Daily reliability classification for the GNSS-IR record |
+| Output | `reliable_proxy` or `suspect_proxy` |
+| Role | Prioritize days for human QC review |
+| Primary evidence | 12 monthly expanding-window out-of-fold validation periods |
+| Evidence period | August 2024 to October 2025 |
+| Public interface | Precomputed results only; the app does not train or tune models |
 
-The repository uses two additional safeguards:
+The target is a **weak QC label** built from a known seasonal damping window,
+low arc availability, low V5 coverage, and low daily water-level range. It is
+not a direct observation of sea ice, sensor failure, or environmental state.
+The classifier learns which days resemble the review rules; it does not
+establish physical truth.
 
-1. `.gitignore` explicitly blocks the source-resolution sea-level CSV and all
-   dashboard pickle files by default. It allowlists only the content-audited
-   `data/precipice_dashboard_public_bundle.pkl`.
-2. `audit_public_bundle.py` fails if the public artifact exceeds its size limit,
-   has an unexpected disclosure profile or schema, contains forbidden source
-   paths or raw-source filenames, exposes raw-style tables, includes
-   over-precise OOF probabilities, or embeds static research images.
+Stage 1 is the first part of a two-stage workflow. Stage 2 reconstructs missing
+water levels with tide and weather information after the reliability review.
+CHS and ECCC variables belong to the later reconstruction workflow and future
+Stage 1 challenger experiments. They were not retroactively added to the
+reported Stage 1 benchmark.
 
-The current local public artifact passed this audit on **2026-08-11**. Its
-audited profile is:
+## Analysis workflow
 
-- 0.28 MB;
-- 433 daily V5 rows and 433 daily QC rows;
-- 1,460 six-hour tide/GNSS rows;
-- 2,880 reduced OOF rows; and
-- 0 embedded images.
+| Step | What happens | Leakage control |
+|---|---|---|
+| 1. Daily aggregation | Level-1 arc diagnostics and V5 coverage are summarized by UTC day | Source-resolution rows stay in the private research workspace |
+| 2. Weak-label construction | Transparent QC rules assign the daily proxy target | `ms_median`, the benchmark feature, is not used to construct the target |
+| 3. Feature comparison | Small teacher-requested feature sets and signal-only pipelines are compared | Correlated features are screened and reported |
+| 4. Temporal validation | Earlier months train the model and the next unseen month is evaluated | Feature selection and tuning are repeated inside each training fold |
+| 5. Human review | Out-of-fold probabilities and diagnostics are shown in Streamlit | The app cannot retrain the model or change its evidence |
 
-These controls prevent accidental publication of the source-resolution
-laboratory tables. They do not make the approved reduced content confidential:
-any chart, aggregate result, coordinate, time series, or downloadable bundle in
-a hosted app or repository is visible to everyone who has access to that
-deployment or repository. If even reduced values are not approved for that
-audience, the public bundle must not be committed; use restricted storage and a
-private deployment instead.
+The earlier season-aware blocked split remains in the app as a diagnostic. The
+monthly expanding-window results are the primary generalization evidence, and
+the two validation designs are not ranked against each other.
 
-## Machine-learning leakage controls
+## Main Stage 1 result
 
-The primary generalization evidence uses **expanding-window,
-out-of-fold (OOF) validation**. Each fold trains on earlier months and evaluates
-the next month while it is still unseen. The public fold summary covers 12
-sequential validation months from November 2024 through October 2025.
+The focused daily dataset contains 452 days, including 434 days with arc files,
+from 1 August 2024 to 26 October 2025. The weak target contains 186
+`reliable_proxy` days and 266 `suspect_proxy` days.
 
-The earlier Week 5 season-aware blocked holdout is retained as a feature
-diagnostic only. Its scores are presented separately and are not ranked against
-the expanding-window OOF results. The hosted app only visualizes precomputed
-evidence, so user interaction cannot retrain, tune, or alter the model.
+| Model comparison | Out-of-fold balanced accuracy | Interpretation |
+|---|---:|---|
+| `ms_median + sp_std`, plain logistic regression | 0.895 | Best controlled V0-V5 feature comparison |
+| Train-fold Lasso-selected signal features, balanced logistic regression | 0.888 | Best signal-only pipeline |
+| `ms_median` benchmark | 0.515 | Single-feature reference |
 
-This design protects the reported temporal validation boundary. It does not
-turn the QC-derived target into an independent physical label, so model scores
-must be interpreted as reproduction of review logic rather than proof of sea
-ice or water-level truth.
+These scores measure agreement with the QC-derived proxy target. They should
+not be reported as sea-ice classification accuracy or independent sensor
+validation.
 
-## Run the public application locally
+## What the app shows
+
+The Streamlit app turns the Stage 1 outputs into a guided review:
+
+- Arctic and station-scale site context;
+- an explanation of GNSS interferometric reflectometry;
+- daily V5, uncertainty, coverage, and damping diagnostics;
+- tide context and two pressure-sensor coverage windows;
+- the proxy-label definition and a signal-review exercise; and
+- feature comparisons, expanding-window folds, and out-of-fold predictions.
+
+Teaching animations use synthetic curves or clearly identified aggregates.
+They are explanatory graphics, not additional measurements.
+
+## Repository contents
+
+| Path | Purpose |
+|---|---|
+| `streamlit_app.py` | Public, read-only Streamlit interface |
+| `build_data_bundle.py` | Local builder for public or private app bundles |
+| `audit_public_bundle.py` | Disclosure audit for the public bundle |
+| `data/precipice_dashboard_public_bundle.pkl` | Reduced artifact used by the deployed app |
+| `.streamlit/config.toml` | App theme and server settings |
+| `pyproject.toml` and `uv.lock` | Reproducible Python environment |
+
+The research notebooks and full sensor data are maintained outside this
+deployment directory. The app does not scan the project tree or regenerate
+notebook results.
+
+## Run the app
 
 Requirements: Python 3.11+ and [`uv`](https://docs.astral.sh/uv/).
 
@@ -129,64 +104,132 @@ uv run python audit_public_bundle.py
 uv run streamlit run streamlit_app.py
 ```
 
-Open the URL printed by Streamlit, normally `http://localhost:8501`.
+Open the local URL printed by Streamlit, normally
+`http://localhost:8501`.
 
-## Rebuild the sanitized bundle
+## Data access and disclosure boundary
 
-Run this step only inside the authorized local project, where the approved
-research inputs are available:
+The deployed app reads one fixed file:
+
+```text
+data/precipice_dashboard_public_bundle.pkl
+```
+
+The public artifact contains:
+
+- daily aggregated V5 and QC values;
+- six-hour tide and GNSS anomaly series;
+- selected, rounded out-of-fold prediction fields;
+- aggregate model and feature-selection tables;
+- pressure coverage intervals without pressure measurements; and
+- coarsened coordinates for display.
+
+It excludes:
+
+- raw NMEA and SNR files;
+- Level-1 arc rows and the raw arc-feature schema;
+- the source-resolution five-minute V5 table;
+- pressure measurements;
+- private notebook outputs and static research figures;
+- secrets, absolute local paths, and private bundle overrides.
+
+### Pickle is not encryption
+
+A `.pkl` file does not hide its contents. Anyone who obtains it can normally
+recover the serialized tables. Converting a private CSV to pickle would still
+disclose the data.
+
+This project can publish the bundled file only because the builder aggregates,
+selects, rounds, and coarsens its contents before serialization. The audit then
+checks the disclosure profile, allowed schemas, row limits, precision, file
+size, forbidden source names, raw-style table keys, and embedded images.
+
+The public artifact passed the local audit on **11 August 2026**:
+
+```text
+size                         0.28 MB
+daily V5 rows                  433
+daily QC rows                  433
+six-hour tide/GNSS rows      1,460
+reduced OOF rows             2,880
+embedded images                  0
+```
+
+These controls prevent the app from exposing source-resolution laboratory
+tables. Every value displayed by the app remains visible to its audience. If a
+reduced value is not approved for that audience, it must stay out of the bundle
+and the repository.
+
+## Rebuild the public bundle
+
+Run the builder only inside the authorized research workspace, where the
+private inputs are available:
 
 ```bash
 uv run python build_data_bundle.py --profile public
 uv run python audit_public_bundle.py
 ```
 
-The public-profile builder reads approved research inputs from local-only,
-Git-ignored project directories. This includes the private source-resolution
-sea-level table, but that file is never copied into the application repository.
-The builder aggregates, reduces, rounds, drops, or coarsens fields before
-writing the deployable artifact. A build must not be released unless the audit
-passes.
+The builder reads approved local Stage 1 outputs, the private V5 source table,
+and contextual tide information. It writes aggregates to the deployment
+directory; it does not copy the private inputs. A public build must not be
+released unless the audit passes.
 
-## Private local review
+The application-level and project-level `.gitignore` files block raw data
+directories, the source V5 filename, secrets, environments, and private pickle
+files. Only the audited public bundle is allowlisted. Git ignore rules do not
+remove files from history, so repository history must be checked before access
+is widened.
 
-`data/precipice_dashboard_bundle.pkl` is a private artifact containing the
-complete five-minute V5 series. It must never be committed or uploaded to
-Streamlit Community Cloud. Authorized local reviewers can build and open it
-deliberately with:
+## Data and software provenance
 
-```bash
-uv run python build_data_bundle.py --profile private
-PRECIPICE_DASHBOARD_BUNDLE=data/precipice_dashboard_bundle.pkl \
-  uv run streamlit run streamlit_app_legacy.py
-```
+| Input or software | Role in this repository | Public status |
+|---|---|---|
+| PRECIPICE GNSS-IR observations | Private source for daily Stage 1 summaries | Raw record not distributed here |
+| Tide predictions | Physical context and one weak-label diagnostic | Reduced anomalies only |
+| Pressure-sensor record | Independent context for two overlap windows | Coverage intervals only |
+| [`gnssir-rt-dev`](https://github.com/Precipice-Sensors/gnssir-rt-dev) | Processing software for the custom PRECIPICE sensors | Linked software repository |
+| [`gnssrefl`](https://github.com/kristinemlarson/gnssrefl) | Reference open GNSS-IR toolkit | Public software and documentation |
+| [Elena Savidge's processing and satellite-context repository](https://github.com/elenasavidge/mcgill-gnssir-satellite-work) | Companion site, processing, Sentinel-2, sea-ice, ICESat-2, and SWOT context | Private collaborator repository |
 
-The public `streamlit_app.py` cannot use this override; it is supported only by
-the ignored legacy entry point.
+The companion repository documents the GNSS-IR processing chain and satellite
+setting. This Stage 1 repository focuses on daily reliability classification
+and the public review interface.
 
-## Release checklist
+## Interpretation limits
 
-Before publishing a new application version:
+- The proxy target supports QC triage; it is not an independently labelled
+  environmental class.
+- Pressure observations cover two periods and are not used as a universal
+  truth record.
+- Tide predictions provide physical context and do not share the GNSS-IR
+  vertical reference.
+- The station map shows an approximate look sector, not a spatial sea-ice
+  interpolation.
+- Model importance describes fitted prediction behavior and is not a causal
+  estimate.
+
+## Project collaborators
+
+Elena Savidge¹, Natalya Gomez¹, David Didier², Jeremy Baudry², Terry Noah³,
+Dave Purnell⁴, and Ruihe Zhang¹
+
+¹ McGill University  
+² Université du Québec à Rimouski  
+³ Ausuittuq Adventures  
+⁴ PRECIPICE
+
+Stage 1 classification and Streamlit review app: Ruihe Zhang  
+Project supervision: Prof. Natalya Gomez  
+Scientific collaboration and GNSS-IR/satellite context: Elena Savidge
+
+## Release check
+
+Before publishing a new app version:
 
 1. Build with `--profile public`.
-2. Run `audit_public_bundle.py` and require a passing result.
-3. Inspect the exact staged-file list and confirm that no private bundle, raw
-   CSV, secret, source-resolution table, or local path is present.
-4. Review the public app as an unauthenticated or least-privileged viewer.
-5. Reconfirm that every displayed result is approved for the deployment's
-   audience.
-
-`.gitignore` is not retroactive. If a private artifact was ever committed,
-removing it from the current tree is insufficient: the Git index and repository
-history must also be audited before widening access.
-
-## Interpretation notes
-
-- The geography map is a single-station look-sector review view, not a spatial
-  interpolation of sea ice.
-- Pressure data validate only two overlap windows.
-- Tide predictions provide physical context; they are not pressure truth.
-- Reconstructed Plotly views use audited, reduced tables rather than embedded
-  static notebook figures.
-- The “Signal detective” activity is educational and is not an independent
-  environmental validation.
+2. Require a passing `audit_public_bundle.py` result.
+3. Inspect the exact staged-file list for raw data, secrets, private bundles,
+   source-resolution tables, and local paths.
+4. Review the app as its least-privileged intended viewer.
+5. Confirm that every displayed result is approved for that audience.
